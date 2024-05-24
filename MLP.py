@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
 
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_layers, output_size):
@@ -18,17 +19,21 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-
 def initialize_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.kaiming_uniform_(m.weight)
         nn.init.zeros_(m.bias)
 
+def generate_data(n_samples=100):
+    X = np.linspace(-10, 10, n_samples).reshape(-1, 1)
+    y = 2 * X + 1 + np.random.normal(0, 2, (n_samples, 1))  # Dodajemy szum dla realizmu
+    return X, y
 
-def train_model(model, criterion, optimizer, data_loader, num_epochs=1000, stop_criteria=1e-4):
+def train_model(model, criterion, optimizer, train_loader, test_loader, num_epochs=100):
     for epoch in range(num_epochs):
+        model.train()
         epoch_loss = 0.0
-        for inputs, targets in data_loader:
+        for inputs, targets in train_loader:
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             optimizer.zero_grad()
@@ -36,20 +41,29 @@ def train_model(model, criterion, optimizer, data_loader, num_epochs=1000, stop_
             optimizer.step()
             epoch_loss += loss.item()
 
-        epoch_loss /= len(data_loader)
+        epoch_loss /= len(train_loader)
 
-        if epoch % 100 == 0:
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {epoch_loss:.4f}')
+        model.eval()
+        test_loss = 0.0
+        with torch.no_grad():
+            for inputs, targets in test_loader:
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                test_loss += loss.item()
 
-        if epoch_loss < stop_criteria:
-            print(f'Training stopped at epoch {epoch + 1} due to low loss: {epoch_loss:.4f}')
+        test_loss /= len(test_loader)
+
+        if epoch % 10 == 0:
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_loss:.4f}, Test Loss: {test_loss:.4f}')
+
+        if test_loss < 1e-4:
+            print(f'Training stopped at epoch {epoch + 1} due to low test loss: {test_loss:.4f}')
             break
 
-
 def main():
-    input_size = 2
-    hidden_layers = [32,16,8,4]
-    output_size = 2
+    input_size = 1
+    hidden_layers = [10, 5]
+    output_size = 1
 
     model = MLP(input_size, hidden_layers, output_size)
     model.apply(initialize_weights)
@@ -57,21 +71,27 @@ def main():
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.01)
 
-    X_train = torch.tensor([[i, i + 1] for i in range(1, 51)], dtype=torch.float32)
-    y_train = torch.tensor([[i *i, (i + 1)*(i+1)] for i in range(1, 51)], dtype=torch.float32)
+    X_train, y_train = generate_data(80)
+    X_test, y_test = generate_data(20)
 
-    dataset = TensorDataset(X_train, y_train)
-    data_loader = DataLoader(dataset, batch_size=1, shuffle=True)
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
 
-    train_model(model, criterion, optimizer, data_loader, num_epochs=1000, stop_criteria=1e-4)
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
-    X_test = torch.tensor([[6, 7]], dtype=torch.float32)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
+    train_model(model, criterion, optimizer, train_loader, test_loader, num_epochs=100)
+
+    example_input = torch.tensor([[6]], dtype=torch.float32)
     model.eval()
     with torch.no_grad():
-        prediction = model(X_test)
-        print(f'Predykcja dla {[6, 7]}: {prediction.numpy()}')
-
+        prediction = model(example_input)
+        print(f'Predykcja dla {[6]}: {prediction.numpy()}')
 
 if __name__ == "__main__":
     main()
