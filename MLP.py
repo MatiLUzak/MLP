@@ -11,6 +11,7 @@ train_losses = {}
 test_losses = {}
 distributions = {}
 predictions = {}
+test_mse_values = {}
 
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_layers, output_size):
@@ -63,13 +64,6 @@ def load_data(base_path):
     print(f'X_train length: {len(X_train)}, y_train length: {len(y_train)}')
     print(f'X_test length: {len(X_test)}, y_test length: {len(y_test)}')
 
-    if np.isnan(X_train).any() or np.isnan(y_train).any() or np.isnan(X_test).any() or np.isnan(y_test).any():
-        print('NaN values found in data. Removing...')
-        X_train = X_train[~np.isnan(X_train).any(axis=1)]
-        y_train = y_train[~np.isnan(y_train).any(axis=1)]
-        X_test = X_test[~np.isnan(X_test).any(axis=1)]
-        y_test = y_test[~np.isnan(y_test).any(axis=1)]
-
     print(f'X_train length after NaN removal: {len(X_train)}, y_train length after NaN removal: {len(y_train)}')
     print(f'X_test length after NaN removal: {len(X_test)}, y_test length after NaN removal: {len(y_test)}')
 
@@ -92,7 +86,7 @@ def train_model(model, criterion, optimizer, train_loader, test_loader, num_epoc
     epoch_test_losses = []
 
     for epoch in range(num_epochs):
-        model.train()
+        #model.train()
         epoch_loss = 0.0
         for inputs, targets in train_loader:
             outputs = model(inputs)
@@ -105,7 +99,7 @@ def train_model(model, criterion, optimizer, train_loader, test_loader, num_epoc
         epoch_loss /= len(train_loader)
         epoch_train_losses.append(epoch_loss)
 
-        model.eval()
+        #model.eval()
         test_loss = 0.0
         with torch.no_grad():
             for inputs, targets in test_loader:
@@ -123,10 +117,11 @@ def train_model(model, criterion, optimizer, train_loader, test_loader, num_epoc
     train_losses[config_name] = epoch_train_losses
     test_losses[config_name] = epoch_test_losses
 
-    # Przechowywanie predykcji do dystrybuanty
+    test_mse_values[config_name] = test_loss
+
     all_predictions = []
     all_targets = []
-    model.eval()
+    #model.eval()
     with torch.no_grad():
         for inputs, targets in test_loader:
             outputs = model(inputs)
@@ -138,16 +133,14 @@ def train_model(model, criterion, optimizer, train_loader, test_loader, num_epoc
     errors = np.sqrt(np.sum((all_predictions - all_targets) ** 2, axis=1))
     distributions[config_name] = errors
 
-    # Store the full test set predictions
     predictions[config_name] = all_predictions
 
     return model
 
-def plot_graphs(train_losses, test_losses, distributions, predictions, X_test, y_test, test_mse):
-    # Plotting training loss
+def plot_graphs(best_train_losses, best_test_losses, best_distributions, best_predictions, X_test, y_test, reference_test_mse, best_model_config):
     plt.figure(figsize=(12, 6))
-    for config_name, losses in train_losses.items():
-        plt.plot(losses, label=config_name)
+    for config_name, losses in best_train_losses.items():
+        plt.plot(range(1, len(losses) + 1), losses, label=config_name)
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('MSE Loss')
@@ -155,13 +148,13 @@ def plot_graphs(train_losses, test_losses, distributions, predictions, X_test, y
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig('training_loss2_all_variants.png')
+    plt.close()
 
-    # Plotting test loss with reference line
     plt.figure(figsize=(12, 6))
-    for config_name, losses in test_losses.items():
-        plt.plot(losses, label=config_name)
-    plt.axhline(y=test_mse, color='r', linestyle='--', label='Test set MSE')
+    for config_name, losses in best_test_losses.items():
+        plt.plot(range(1, len(losses) + 1), losses, label=config_name)
+    plt.axhline(y=reference_test_mse, color='r', linestyle='--', label='Reference Test set MSE')
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('MSE Loss')
@@ -169,11 +162,11 @@ def plot_graphs(train_losses, test_losses, distributions, predictions, X_test, y
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig('test_loss2_all_variants.png')
+    plt.close()
 
-    # Plotting error distributions
     plt.figure(figsize=(12, 6))
-    for config_name, errors in distributions.items():
+    for config_name, errors in best_distributions.items():
         sorted_errors = np.sort(errors)
         cdf = np.arange(len(sorted_errors)) / float(len(sorted_errors))
         plt.plot(sorted_errors, cdf, label=config_name)
@@ -183,25 +176,26 @@ def plot_graphs(train_losses, test_losses, distributions, predictions, X_test, y
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig('error_distribution2_all_variants.png')
+    plt.close()
 
-    # Scatter plot for the best performing network variant
-    best_config = min(test_losses, key=lambda k: test_losses[k][-1])
-    best_model_predictions = predictions[best_config]
+    best_model_predictions = best_predictions[best_model_config]
 
     plt.figure(figsize=(10, 6))
     plt.scatter(X_test[:, 0], X_test[:, 1], color='red', label='Zmierzona')
+    #plt.scatter(y_test[:, 0], y_test[:, 1], color='green', label='Rzeczywista')
+    plt.scatter(best_model_predictions[:, 0], best_model_predictions[:, 1], color='blue', label='Skorygowana przez sieć')
     plt.scatter(y_test[:, 0], y_test[:, 1], color='green', label='Rzeczywista')
-    plt.scatter(best_model_predictions[:, 0], best_model_predictions[:, 1], color='blue',
-                label='Skorygowana przez sieć')
-    plt.title('Pozycje: rzeczywista, zmierzona i skorygowana przez sieć')
+    plt.title(f'Pozycje: rzeczywista, zmierzona i skorygowana przez sieć - {best_model_config}')
     plt.xlabel('X')
     plt.ylabel('Y')
     plt.legend()
-    plt.savefig('positions.png')
-    plt.show()
+    plt.savefig(f'positions2_{best_model_config}.png')
+    plt.close()
+
 
 def main():
+    global criterion
     base_path = 'C:/Users/mluza/PycharmProjects/MLP/dane/'
     X_train, y_train, X_test, y_test = load_data(base_path)
 
@@ -215,32 +209,44 @@ def main():
     output_size = 2
 
     hidden_layer_configs = [
-        [15, 15]
+        [16],
+        [16, 8],
+        [32, 16, 8]
     ]
 
+    learning_rate = 0.001
+    best_train_losses = {}
+    best_test_losses = {}
+    best_distributions = {}
+    best_predictions = {}
+
     for hidden_layers in hidden_layer_configs:
+        best_config = None
+        best_test_loss = float('inf')
         for run in range(3):
-            config_name = f'{hidden_layers}_run_{run+1}'
-            print(f'Training model with hidden layers: {hidden_layers}, run: {run + 1}')
+            config_name = f'{hidden_layers}_lr_{learning_rate}_run_{run+1}'
+            print(f'Training model with hidden layers: {hidden_layers}, learning rate: {learning_rate}, run: {run + 1}')
             model = MLP(input_size, hidden_layers, output_size)
             model.apply(initialize_weights)
 
             criterion = nn.MSELoss()
-            optimizer = optim.Adam(model.parameters(), lr=0.001)
+            optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-            trained_model = train_model(model, criterion, optimizer, train_loader, test_loader, num_epochs=10, config_name=config_name)
+            train_model(model, criterion, optimizer, train_loader, test_loader, num_epochs=25, config_name=config_name)
+            if train_losses[config_name][-1] < best_test_loss:
+                best_test_loss = train_losses[config_name][-1]
+                best_config = config_name
 
-            example_input = torch.tensor([[7526.0, 602.0]], dtype=torch.float32)
-            model.eval()
-            with torch.no_grad():
-                prediction = trained_model(example_input)
-                print(f'Predykcja dla {[7526.0, 602.0]}: {prediction.numpy()}')
+        best_train_losses[best_config] = train_losses[best_config]
+        best_test_losses[best_config] = test_losses[best_config]
+        best_distributions[best_config] = distributions[best_config]
+        best_predictions[best_config] = predictions[best_config]
 
-    # Compute test set MSE reference line
-    test_mse = criterion(y_test.clone().detach(), y_test.clone().detach()).item()
+    reference_test_mse = criterion(X_test, y_test).item()
+    print(f'Reference Test MSE: {reference_test_mse}')
+    best_model_config = min(best_test_losses, key=lambda k: best_test_losses[k][-1])
 
-    # Draw plots
-    plot_graphs(train_losses, test_losses, distributions, predictions, X_test, y_test, test_mse)
+    plot_graphs(best_train_losses, best_test_losses, best_distributions, best_predictions, X_test, y_test, reference_test_mse, best_model_config)
 
 if __name__ == "__main__":
     main()
